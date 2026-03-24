@@ -1,10 +1,12 @@
 import fs from 'fs';
 import https from 'https';
+import path from 'path';
 import { Api, Bot, InputFile } from 'grammy';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import { transcribeAudioBuffer } from '../transcription.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
@@ -200,13 +202,159 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+
+      // Download photo (largest size) and save to group workspace
+      let content = `[Photo]${caption}`;
+      try {
+        const photos = ctx.message.photo;
+        const largest = photos[photos.length - 1];
+        const file = await this.bot!.api.getFile(largest.file_id);
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          const imagesDir = path.join(GROUPS_DIR, group.folder, 'images');
+          fs.mkdirSync(imagesDir, { recursive: true });
+          const filename = `photo-${Date.now()}.jpg`;
+          const filePath = path.join(imagesDir, filename);
+          fs.writeFileSync(filePath, buffer);
+          // Container sees this at /workspace/group/images/
+          content = `[Photo: /workspace/group/images/${filename} — Use the Read tool to view this image]${caption}`;
+          logger.info({ chatJid, filePath, bytes: buffer.length }, 'Saved Telegram photo to workspace');
+        }
+      } catch (err) {
+        logger.error({ err }, 'Failed to download Telegram photo');
+      }
+
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+      });
+
+      logger.info({ chatJid, sender: senderName }, 'Telegram photo message stored');
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
+    this.bot.on('message:voice', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+
+      let content = '[Voice Message - transcription unavailable]';
+      try {
+        const file = await ctx.getFile();
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          logger.info({ bytes: buffer.length, chatJid }, 'Downloaded Telegram voice message');
+          const transcript = await transcribeAudioBuffer(buffer);
+          if (transcript) {
+            content = `[Voice: ${transcript}]`;
+            logger.info({ chatJid, length: transcript.length }, 'Transcribed Telegram voice message');
+          }
+        }
+      } catch (err) {
+        logger.error({ err }, 'Telegram voice transcription error');
+        content = '[Voice Message - transcription failed]';
+      }
+
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+      });
+
+      logger.info({ chatJid, sender: senderName }, 'Telegram voice message stored');
+    });
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+    this.bot.on('message:document', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) {
+        return;
+      }
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const fileName = ctx.message.document?.file_name || 'file';
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+
+      let content = `[Document: ${fileName}]${caption}`;
+      try {
+        const file = await ctx.getFile();
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          const docsDir = path.join(GROUPS_DIR, group.folder, 'documents');
+          fs.mkdirSync(docsDir, { recursive: true });
+          // Sanitize filename and add timestamp to avoid collisions
+          const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const savedName = `${Date.now()}-${safeName}`;
+          const filePath = path.join(docsDir, savedName);
+          fs.writeFileSync(filePath, buffer);
+          content = `[Document: /workspace/group/documents/${savedName} — Use the Read tool to view this file]${caption}`;
+          logger.info({ chatJid, filePath, bytes: buffer.length, fileName }, 'Saved Telegram document to workspace');
+        }
+      } catch (err) {
+        logger.error({ err, fileName }, 'Failed to download Telegram document');
+      }
+
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content,
+        timestamp,
+        is_from_me: false,
+      });
+
+      logger.info({ chatJid, sender: senderName, fileName }, 'Telegram document stored');
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
@@ -266,7 +414,11 @@ export class TelegramChannel implements Channel {
     }
   }
 
-  async sendPhoto(jid: string, filePath: string, caption?: string): Promise<void> {
+  async sendPhoto(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
       return;
@@ -274,10 +426,14 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-      await this.bot.api.sendPhoto(numericId, new InputFile(fs.createReadStream(filePath)), {
-        caption,
-        parse_mode: 'Markdown',
-      });
+      await this.bot.api.sendPhoto(
+        numericId,
+        new InputFile(fs.createReadStream(filePath)),
+        {
+          caption,
+          parse_mode: 'Markdown',
+        },
+      );
       logger.info({ jid, filePath }, 'Telegram photo sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram photo');

@@ -12,7 +12,11 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
-  sendPhoto?: (jid: string, filePath: string, caption?: string) => Promise<void>;
+  sendPhoto?: (
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -79,8 +83,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 const authorized =
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup);
+                  isMain || (targetGroup && targetGroup.folder === sourceGroup);
 
                 if (!authorized) {
                   logger.warn(
@@ -93,12 +96,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
                   );
-                } else if (data.type === 'photo' && data.photoFile && deps.sendPhoto) {
+                } else if (
+                  data.type === 'photo' &&
+                  data.photoFile &&
+                  deps.sendPhoto
+                ) {
                   const photoPath = path.join(messagesDir, data.photoFile);
                   if (fs.existsSync(photoPath)) {
                     await deps.sendPhoto(data.chatJid, photoPath, data.caption);
                     // Clean up the photo file after sending
-                    try { fs.unlinkSync(photoPath); } catch { /* ignore */ }
+                    try {
+                      fs.unlinkSync(photoPath);
+                    } catch {
+                      /* ignore */
+                    }
                     logger.info(
                       { chatJid: data.chatJid, sourceGroup },
                       'IPC photo sent',

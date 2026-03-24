@@ -174,7 +174,11 @@ function buildVolumeMounts(
   // bind-mounted directories are writable by the container user.
   if (process.getuid?.() === 0) {
     const chownRecursive = (dir: string) => {
-      try { execSync(`chown -R 1000:1000 "${dir}"`, { stdio: 'ignore' }); } catch { /* ignore */ }
+      try {
+        execSync(`chown -R 1000:1000 "${dir}"`, { stdio: 'ignore' });
+      } catch {
+        /* ignore */
+      }
     };
     chownRecursive(groupIpcDir);
     chownRecursive(groupSessionsDir);

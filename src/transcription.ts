@@ -2,6 +2,7 @@ import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { WAMessage, WASocket } from '@whiskeysockets/baileys';
 
 import { readEnvFile } from './env.js';
+import { logger } from './logger.js';
 
 interface TranscriptionConfig {
   model: string;
@@ -15,15 +16,18 @@ const DEFAULT_CONFIG: TranscriptionConfig = {
   fallbackMessage: '[Voice Message - transcription unavailable]',
 };
 
-async function transcribeWithOpenAI(
+/**
+ * Transcribe an audio buffer using OpenAI Whisper API.
+ * Channel-agnostic — works with any audio source.
+ */
+export async function transcribeAudioBuffer(
   audioBuffer: Buffer,
-  config: TranscriptionConfig,
 ): Promise<string | null> {
   const env = readEnvFile(['OPENAI_API_KEY']);
   const apiKey = env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    console.warn('OPENAI_API_KEY not set in .env');
+    logger.warn('OPENAI_API_KEY not set in .env');
     return null;
   }
 
@@ -40,14 +44,14 @@ async function transcribeWithOpenAI(
 
     const transcription = await openai.audio.transcriptions.create({
       file: file,
-      model: config.model,
+      model: DEFAULT_CONFIG.model,
       response_format: 'text',
     });
 
     // When response_format is 'text', the API returns a plain string
-    return transcription as unknown as string;
+    return (transcription as unknown as string)?.trim() || null;
   } catch (err) {
-    console.error('OpenAI transcription failed:', err);
+    logger.error({ err }, 'OpenAI transcription failed');
     return null;
   }
 }
@@ -56,10 +60,8 @@ export async function transcribeAudioMessage(
   msg: WAMessage,
   sock: WASocket,
 ): Promise<string | null> {
-  const config = DEFAULT_CONFIG;
-
-  if (!config.enabled) {
-    return config.fallbackMessage;
+  if (!DEFAULT_CONFIG.enabled) {
+    return DEFAULT_CONFIG.fallbackMessage;
   }
 
   try {
@@ -74,22 +76,17 @@ export async function transcribeAudioMessage(
     )) as Buffer;
 
     if (!buffer || buffer.length === 0) {
-      console.error('Failed to download audio message');
-      return config.fallbackMessage;
+      logger.error('Failed to download audio message');
+      return DEFAULT_CONFIG.fallbackMessage;
     }
 
-    console.log(`Downloaded audio message: ${buffer.length} bytes`);
+    logger.info({ bytes: buffer.length }, 'Downloaded audio message');
 
-    const transcript = await transcribeWithOpenAI(buffer, config);
-
-    if (!transcript) {
-      return config.fallbackMessage;
-    }
-
-    return transcript.trim();
+    const transcript = await transcribeAudioBuffer(buffer);
+    return transcript || DEFAULT_CONFIG.fallbackMessage;
   } catch (err) {
-    console.error('Transcription error:', err);
-    return config.fallbackMessage;
+    logger.error({ err }, 'Transcription error');
+    return DEFAULT_CONFIG.fallbackMessage;
   }
 }
 
