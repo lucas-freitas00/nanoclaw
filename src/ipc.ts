@@ -12,6 +12,7 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendPhoto?: (jid: string, filePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -74,23 +75,40 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
+              if (data.chatJid) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
-                if (
+                const authorized =
                   isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
+                  (targetGroup && targetGroup.folder === sourceGroup);
+
+                if (!authorized) {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC message attempt blocked',
+                  );
+                } else if (data.type === 'message' && data.text) {
                   await deps.sendMessage(data.chatJid, data.text);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
                   );
-                } else {
-                  logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
-                  );
+                } else if (data.type === 'photo' && data.photoFile && deps.sendPhoto) {
+                  const photoPath = path.join(messagesDir, data.photoFile);
+                  if (fs.existsSync(photoPath)) {
+                    await deps.sendPhoto(data.chatJid, photoPath, data.caption);
+                    // Clean up the photo file after sending
+                    try { fs.unlinkSync(photoPath); } catch { /* ignore */ }
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC photo sent',
+                    );
+                  } else {
+                    logger.warn(
+                      { photoFile: data.photoFile, sourceGroup },
+                      'IPC photo file not found',
+                    );
+                  }
                 }
               }
               fs.unlinkSync(filePath);

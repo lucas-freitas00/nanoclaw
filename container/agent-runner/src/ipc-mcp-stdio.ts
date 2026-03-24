@@ -63,6 +63,43 @@ server.tool(
 );
 
 server.tool(
+  'send_photo',
+  "Send a photo/image to the user or group. Use this after taking a screenshot or generating an image. The file must exist in the container filesystem.",
+  {
+    file_path: z.string().describe('Absolute path to the image file (e.g., /tmp/screenshot.png)'),
+    caption: z.string().optional().describe('Optional caption text to send with the photo'),
+  },
+  async (args) => {
+    if (!fs.existsSync(args.file_path)) {
+      return {
+        content: [{ type: 'text' as const, text: `File not found: ${args.file_path}` }],
+        isError: true,
+      };
+    }
+
+    // Copy the file to the IPC messages directory so the host can access it
+    const ext = path.extname(args.file_path) || '.png';
+    const photoFilename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    const photoPath = path.join(MESSAGES_DIR, photoFilename);
+    fs.mkdirSync(MESSAGES_DIR, { recursive: true });
+    fs.copyFileSync(args.file_path, photoPath);
+
+    const data: Record<string, string | undefined> = {
+      type: 'photo',
+      chatJid,
+      photoFile: photoFilename,
+      caption: args.caption || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: 'Photo sent.' }] };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 

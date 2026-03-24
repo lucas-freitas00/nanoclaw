@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, exec, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -169,6 +169,16 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+
+  // When host runs as root, container runs as node (1000). Ensure all
+  // bind-mounted directories are writable by the container user.
+  if (process.getuid?.() === 0) {
+    const chownRecursive = (dir: string) => {
+      try { execSync(`chown -R 1000:1000 "${dir}"`, { stdio: 'ignore' }); } catch { /* ignore */ }
+    };
+    chownRecursive(groupIpcDir);
+    chownRecursive(groupSessionsDir);
+  }
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
