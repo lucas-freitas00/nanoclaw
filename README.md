@@ -208,3 +208,88 @@ See [CHANGELOG.md](CHANGELOG.md) for breaking changes and migration notes.
 ## License
 
 MIT
+
+---
+
+## Informações da migração (30/10/2026)
+
+> O texto acima é o README original do upstream (`qwibitai/nanoclaw`), preservado sem alterações. Este repositório é o **fork do Lucas** (`lucas-freitas00/nanoclaw`, público no GitHub), feito sobre o upstream em março/2026.
+
+### Status
+
+**Parado.** O último commit da default `main` é de 2026-03-24 00:48 BRT: "feat: add Telegram voice transcription, photo vision, document support". São 440 commits desde 2026-01-31. Os 5 últimos (24/03, autor `root`) são do Lucas e trazem:
+
+- os merges das skill branches `whatsapp/main`, `telegram/main` e `whatsapp/skill/voice-transcription`;
+- a correção "root-as-host permission issues";
+- transcrição de voz, visão de foto e documentos no Telegram.
+
+O repo continua relevante: é a **base** dos dois forks vivos (o `nanoclaw-pod/` do `agent-hub-worker` e o `nanoclaw-host` do nó). A memória do Adjutor (29/10/2026) o descreve como "mirror congelado" e diz que o fork vivo fica no `agent-hub-worker/nanoclaw-pod/`.
+
+### Stack
+
+- Node.js ≥ 20 (`.nvmrc` = 22), TypeScript ^5.7 e ESM. É o `nanoclaw` 1.2.17.
+- Canais: grammy ^1.41 (Telegram) e `@whiskeysockets/baileys` ^7.0.0-rc.9 (WhatsApp).
+- Dependências: better-sqlite3 ^11.8, zod ^4.3, openai ^6.27 (transcrição), cron-parser, pino, yaml e qrcode.
+- Ferramentas de dev: vitest ^4, prettier ^3.8, husky ^9, eslint e tsx.
+- Container do agente (`container/Dockerfile`): `node:22-slim` com o `agent-runner`, que usa `@anthropic-ai/claude-agent-sdk` ^0.2.76.
+
+### Estrutura do repositório
+
+| Pasta | O que é |
+|---|---|
+| `src/` | Processo host: `index.ts`, `router.ts`, `db.ts`, `ipc.ts`, `group-queue.ts`, `task-scheduler.ts`, `container-runner.ts`/`container-runtime.ts`, `credential-proxy.ts`, `transcription.ts`, `sender-allowlist.ts`, `remote-control.ts`, mais os testes vitest |
+| `src/channels/` | Canais `telegram.ts` e `whatsapp.ts`, e o `registry.ts` |
+| `container/` | `Dockerfile`, `build.sh`, `agent-runner/` (o subprocess que roda o Claude Agent SDK) e `skills/` |
+| `setup/` | Assistente de instalação (`npm run setup`): ambiente, container, grupos, mounts, serviço, verificação e auth do WhatsApp |
+| `.claude/` | Skills do Claude Code do projeto (add-telegram, add-slack etc.) |
+| `docs/` | SPEC, SECURITY, REQUIREMENTS, SDK_DEEP_DIVE, skills-as-branches, debug checklist |
+| `groups/`, `config-examples/`, `launchd/`, `scripts/`, `repo-tokens/`, `assets/` | Templates de grupos, exemplos de config, unit launchd (macOS), scripts auxiliares, badge de contagem de tokens, imagens |
+| `.github/workflows/` | `ci.yml`, `bump-version.yml`, `label-pr.yml`, `merge-forward-skills.yml`, `update-tokens.yml` e `fork-sync-skills.yml` (este desabilitado), todos vindos do upstream. No GitHub, a última execução foi em 2026-04-22 (failure, schedule). **Não rodam no GitLab** |
+
+### Como rodar / desenvolver
+
+```bash
+npm ci
+npm run build        # tsc → dist/
+npm start            # node dist/index.js
+npm run dev          # tsx src/index.ts
+npm run setup        # assistente de instalação (tsx setup/index.ts)
+npm run auth         # pareamento do WhatsApp
+npm test             # vitest run
+npm run typecheck && npm run format:check
+./container/build.sh # imagem do agent-runner (modo container do upstream)
+```
+
+### Deploy / onde roda em produção
+
+**Este repositório não é implantado diretamente em lugar nenhum** (inventário de 30/10/2026). O código derivado dele roda em três lugares:
+
+| Derivado | Onde | Observação |
+|---|---|---|
+| `agent-hub-worker/nanoclaw-pod/` | Pods da frota (ns `agents` no k3s) e pod do Adjutor (`/app`, nanoclaw 1.2.17, imagem `nanoclaw-pod-ops:0.1.0`) | `FORK.md` registra a base `89e0e8f` (= HEAD desta `main`) e o diff in-pod (Docker → subprocess) |
+| **`nanoclaw-host`** (bot de reserva `workerk8s_bot`) | `nó:/home/dev/nanoclaw-host` (nó k3s `agents-k3s-01`), unit **de usuário** systemd `nanoclaw-host.service` (`node dist/index.js`, `EnvironmentFile=.env`), ativa | **Cópia sem `.git`** com fork próprio. Segundo o inventário §2.2, 17 arquivos de `src/`/agent-runner (telegram, db, index, transcription, container-runner…) diferem desta `main` **e também** do `nanoclaw-pod`. Ela traz o mesmo `FORK.md` e os `Dockerfile.pod*`, ou seja, deriva do `nanoclaw-pod`. **O código existe só no nó** |
+| Peer `workerlaravelagents_bot` (histórico) | Container `laravel_augustus-agents` na VPS | Aposentado em 10/09/2026, depois de perder o código num redeploy (memória `peer-retired-single-operator`) |
+
+### Configuração
+
+Nesta seção aparecem só os nomes das variáveis.
+
+- `.env.example`: `ASSISTANT_HAS_OWN_NUMBER`, `OPENAI_API_KEY`.
+- `src/config.ts`: `ASSISTANT_NAME`, `CONTAINER_IMAGE`, `CONTAINER_TIMEOUT`, `CONTAINER_MAX_OUTPUT_SIZE`, `CREDENTIAL_PROXY_PORT`, `IDLE_TIMEOUT`, `MAX_CONCURRENT_CONTAINERS`, `TZ`.
+- Lidas do `.env` (`src/env.ts`, canais, credential-proxy): `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`.
+
+Onde ficam os segredos do `nanoclaw-host`: em `nó:/home/dev/nanoclaw-host/.env`, que tem também 4 cópias `.env.bak-*`, e em `runtime/…/sessions/*.key`. Nada disso pode ser versionado.
+
+### Branches
+
+Default: `main`. É a única branch, não há tags. Não há nada para normalizar.
+
+### Relação com outros projetos
+
+- **Upstream:** `qwibitai/nanoclaw`, do qual este repo é fork.
+- **agent-hub-worker** (`plataforma/agent-hub-worker`): `nanoclaw-pod/` é o fork in-pod vivo, montado sobre o commit `89e0e8f` deste repo. Dele saem as imagens `nanoclaw-pod-*` que o worker provisiona.
+- **nanoclaw-host** (código só no nó): o inventário sugere criar um projeto `plataforma/nanoclaw-host` (ou uma branch a partir deste repo), excluindo `runtime/`, `node_modules/`, `dist/`, `.env*` e `*.bak-*`.
+
+### Origem
+
+Importado do GitHub `lucas-freitas00/nanoclaw` em 30/10/2026 (projeto GitLab id 8, grupo `plataforma`). O GitHub passa a ser espelho somente-leitura: **push só no GitLab** (`https://gitlab.194-163-171-140.sslip.io/plataforma/nanoclaw`).
